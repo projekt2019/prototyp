@@ -2,7 +2,7 @@
 Imports System.Net
 Imports System.Text.Encoding
 
-Public Class ConnectorServer
+Public Class ServerConnector
     Private serverSocket As TcpListener
     ' Liste aller verbundener Clients
     Private ReadOnly _sockets As New List(Of TcpClient)
@@ -14,34 +14,68 @@ Public Class ConnectorServer
         End Get
     End Property
 
-    ' Event für empfangende Nachricht
-    Public Event RecievedMessage(ByVal str As String, ByRef socket As TcpClient)
+    ' recieve Event
+    Private recieveHandler As Action(Of String, TcpClient)
+
+    Public WriteOnly Property OnRecieve() As Action(Of String, TcpClient)
+        Set(value As Action(Of String, TcpClient))
+            recieveHandler = value
+        End Set
+    End Property
+
+    ' connect Event
+    Private connectionHandler As Action(Of TcpClient)
+
+    Public WriteOnly Property OnConnection() As Action(Of TcpClient)
+        Set(value As Action(Of TcpClient))
+            connectionHandler = value
+        End Set
+    End Property
+
+    ' disconnect Event
+    Private closingHandler As Action(Of TcpClient)
+
+    Public WriteOnly Property OnClose() As Action(Of TcpClient)
+        Set(value As Action(Of TcpClient))
+            closingHandler = value
+        End Set
+    End Property
+
+    Private Ip As String = "0.0.0.0"
+    Private Port As Integer = 8080
 
     ' Konstruktoren
     Public Sub New()
-        connect("0.0.0.0", 8080)
+
     End Sub
-    Public Sub New(port As Integer)
-        connect("0.0.0.0", port)
+    Public Sub New(_port As Integer)
+        Port = _port
     End Sub
-    Public Sub New(Ip As String, Port As Integer)
-        connect(Ip, Port)
+    Public Sub New(_Ip As String, _Port As Integer)
+        Ip = _Ip
+        Port = _Port
     End Sub
 
     ' Verbinden(mit IP und Port)
-    Public Sub connect(Ip As String, Port As Integer)
+    Public Sub connect()
 
         ' Neuer Listener
         serverSocket = New TcpListener(IPAddress.Parse(Ip), Port)
         ' Startet Server
         serverSocket.Start()
+        Console.WriteLine("Server läuft auf " & Ip & ":" & Port)
         While True
             ' sucht nach neuem client
             Dim clientSocket As TcpClient = serverSocket.AcceptTcpClient()
             ' fügt client zu der Liste hinzu
-            RaiseEvent RecievedMessage("Neuer Client!", clientSocket)
+            If connectionHandler IsNot Nothing Then
+                connectionHandler(clientSocket)
+            End If
+
             _sockets.Add(clientSocket)
             awaitMessage(clientSocket)
+
+
         End While
 
     End Sub
@@ -56,9 +90,21 @@ Public Class ConnectorServer
     ' Wartet Asynchron auf Nachricht
     Private Async Sub awaitMessage(client As TcpClient)
         While True
-            ' Gibt Event aus
-            Dim result As String = Await recieve(client)
-            RaiseEvent RecievedMessage(result, client)
+            Dim result As String
+            Try
+                ' Gibt Event aus
+
+                result = Await recieve(client)
+
+            Catch ex As Exception
+                closeConnection(client)
+            Finally
+                result = result.Trim()
+                If recieveHandler IsNot Nothing Then
+                    recieveHandler(result, client)
+                End If
+            End Try
+
         End While
     End Sub
 
@@ -86,7 +132,6 @@ Public Class ConnectorServer
     ' empfängt eine Nachricht asynchron
     Private Async Function recieve(sender As TcpClient) As Task(Of String)
         Dim serverStream As NetworkStream = sender.GetStream()
-        Console.WriteLine("recieve")
         Dim inStream(sender.ReceiveBufferSize) As Byte
         ' Nachrichten einlesen
         Await serverStream.ReadAsync(inStream, 0, sender.ReceiveBufferSize)
@@ -97,13 +142,17 @@ Public Class ConnectorServer
 
     ' beendet eine Verbindung
     Public Sub closeConnection(client As TcpClient)
+        If closingHandler IsNot Nothing Then
+            closingHandler(client)
+        End If
         _sockets.Remove(client)
         client.Close()
+        client.Dispose()
     End Sub
 
     ' beendet alle Verbindungen
     Public Sub closeConnections()
-        For Each client In sockets
+        For Each client In Sockets
             closeConnection(client)
         Next
     End Sub

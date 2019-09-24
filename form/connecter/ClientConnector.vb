@@ -2,28 +2,61 @@
 Imports System.Threading
 Imports System.Text.Encoding
 
-Public Class ConnectorClient
+Public Class ClientConnector
     Private clientSocket As TcpClient
+    Private Ip As String = "127.0.0.1"
+    Private Port As Integer = 8080
     Event RecievedMessage(ByVal str As String)
 
+    ' recieve Event
+    Private recieveHandler As Action(Of String)
+
+    Public WriteOnly Property OnRecieve() As Action(Of String)
+        Set(value As Action(Of String))
+            recieveHandler = value
+        End Set
+    End Property
+
+    ' connect Event
+    Private connectionHandler As Action
+
+    Public WriteOnly Property OnConnection() As Action
+        Set(value As Action)
+            connectionHandler = value
+        End Set
+    End Property
+
+    ' disconnect Event
+    Private closingHandler As Action
+
+    Public WriteOnly Property OnClose() As Action
+        Set(value As Action)
+            closingHandler = value
+        End Set
+    End Property
+
     Public Sub New()
-        connect("127.0.0.1", 8080)
+
     End Sub
-    Public Sub New(Port As Integer)
-        connect("127.0.0.1", Port)
+    Public Sub New(_Port As Integer)
+        Ip = "127.0.0.1"
+        Port = _Port
     End Sub
 
-    Public Sub New(Ip As String, Port As Integer)
-        connect(Ip, Port)
+    Public Sub New(_Ip As String, _Port As Integer)
+        Ip = _Ip
+        Port = _Port
     End Sub
 
 
 
     ' Verbinden
-    Private Sub connect(Ip As String, Port As Integer)
+    Public Sub connect()
         ' Erstellt Socket mit IP und Port
         Me.clientSocket = New TcpClient(Ip, Port)
-        Console.WriteLine("Client")
+        If connectionHandler IsNot Nothing Then
+            connectionHandler()
+        End If
         ' Wartet auf Nachrichten(unendlich)
         recieveThread()
     End Sub
@@ -38,12 +71,19 @@ Public Class ConnectorClient
     Private Async Sub recieveThreadSub()
         While True
             ' Gibt Nachricht als Event weiter
-            RaiseEvent RecievedMessage(Await recieve())
+            Dim msg As String = Await recieve()
+            If recieveHandler IsNot Nothing Then
+                recieveHandler(msg)
+            End If
         End While
     End Sub
 
     Public Sub disconnect()
+        If closingHandler IsNot Nothing Then
+            closingHandler()
+        End If
         clientSocket.Close()
+        clientSocket.Dispose()
     End Sub
 
     ' Nachrichten senden
@@ -52,7 +92,7 @@ Public Class ConnectorClient
         ' Verbindung
         Dim serverStream As NetworkStream = clientSocket.GetStream()
         ' Nachricht in Bytes umwandeln
-        Dim outStream As Byte() = ASCII.GetBytes(msg & "$")
+        Dim outStream As Byte() = ASCII.GetBytes(msg)
 
         ' senden
         Await serverStream.WriteAsync(outStream, 0, outStream.Length)
@@ -66,6 +106,7 @@ Public Class ConnectorClient
         ' Nachrichten einlesen
         Await serverStream.ReadAsync(inStream, 0, clientSocket.ReceiveBufferSize)
         ' In String umwandeln
+
         Return ASCII.GetString(inStream)
     End Function
 
